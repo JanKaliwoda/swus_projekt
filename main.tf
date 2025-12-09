@@ -7,6 +7,7 @@ provider "google" {
 # --- Compute Engine Instances (VMs) ---
 
 # Master Node VM
+# Master Node VM
 resource "google_compute_instance" "master_node" {
   name         = "kube-master"
   machine_type = "e2-standard-2" # Sufficient for master in a lab environment
@@ -28,57 +29,69 @@ resource "google_compute_instance" "master_node" {
   }
 
   # Startup script to install Docker, kubelet, kubeadm, kubectl, and configure prerequisites
-  metadata_startup_script = <<-EOF
-    #!/bin/bash
-    # Basic setup: Install Docker, kubelet, kubeadm, kubectl
-    sudo apt-get update
-    sudo apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release
+metadata_startup_script = <<EOF
+#!/bin/bash
+set -e
+exec > >(tee /var/log/startup-script.log)
+exec 2>&1
 
-    # Add Docker GPG key and repository
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-    sudo apt-get update
-    sudo apt-get install -y docker-ce docker-ce-cli containerd.io
+echo "Starting Kubernetes node setup..."
 
-    # Set up Docker daemon for Kubernetes
-    cat <<EOT | sudo tee /etc/docker/daemon.json
-    {
-      "exec-opts": ["native.cgroupdriver=systemd"],
-      "log-driver": "json-file",
-      "log-opts": {
-        "max-size": "100m"
-      },
-      "storage-driver": "overlay2"
-    }
-    EOT
-    sudo systemctl enable docker
-    sudo systemctl daemon-reload
-    sudo systemctl restart docker
+sudo apt-get update
+sudo apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release
 
-    # Disable swap
-    sudo swapoff -a
-    sudo sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
+echo "Installing Docker..."
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io
 
-    # Add Kubernetes GPG key and repository
-    curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/kubernetes-archive-keyring.gpg
-    echo "deb [signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://apt.kubernetes.io/ kubernetes-xenial main" | sudo tee /etc/apt/sources.list.d/kubernetes.list
+echo "Configuring Docker daemon..."
+sudo tee /etc/docker/daemon.json > /dev/null <<'DOCKER_EOF'
+{
+  "exec-opts": ["native.cgroupdriver=systemd"],
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "100m"
+  },
+  "storage-driver": "overlay2"
+}
+DOCKER_EOF
+sudo systemctl enable docker
+sudo systemctl daemon-reload
+sudo systemctl restart docker
 
-    sudo apt-get update
-    sudo apt-get install -y kubelet kubeadm kubectl
-    sudo apt-mark hold kubelet kubeadm kubectl
+echo "Disabling swap..."
+sudo swapoff -a
+sudo sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
 
-    # Enable IP forwarding and bridge networking for CNI
-    cat <<EOT | sudo tee /etc/modules-load.d/k8s.conf
-    br_netfilter
-    EOT
+echo "Installing Kubernetes components..."
+# Poprawne repozytorium dla nowszych wersji Ubuntu
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
 
-    cat <<EOT | sudo tee /etc/sysctl.d/k8s.conf
-    net.bridge.bridge-nf-call-ip6tables = 1
-    net.bridge.bridge-nf-call-iptables = 1
-    net.ipv4.ip_forward = 1
-    EOT
-    sudo sysctl --system
-  EOF
+# Alternatywnie, możesz użyć starszej metody (ale zaktualizowanej):
+# curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes.gpg
+# echo "deb [signed-by=/etc/apt/keyrings/kubernetes.gpg] https://apt.kubernetes.io/ kubernetes-xenial main" | sudo tee /etc/apt/sources.list.d/kubernetes.list
+
+sudo apt-get update
+sudo apt-get install -y kubelet kubeadm kubectl
+sudo apt-mark hold kubelet kubeadm kubectl
+
+echo "Configuring kernel networking..."
+sudo tee /etc/modules-load.d/k8s.conf > /dev/null <<'MODULES_EOF'
+br_netfilter
+MODULES_EOF
+
+sudo tee /etc/sysctl.d/k8s.conf > /dev/null <<'SYSCTL_EOF'
+net.bridge.bridge-nf-call-ip6tables = 1
+net.bridge.bridge-nf-call-iptables = 1
+net.ipv4.ip_forward = 1
+SYSCTL_EOF
+sudo sysctl --system
+
+echo "Kubernetes node setup completed successfully"
+EOF
 }
 
 # Worker Node VM
