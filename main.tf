@@ -7,164 +7,187 @@ provider "google" {
 # --- Compute Engine Instances (VMs) ---
 
 # Master Node VM
-# Master Node VM
 resource "google_compute_instance" "master_node" {
   name         = "kube-master"
-  machine_type = "e2-standard-2" # Sufficient for master in a lab environment
+  machine_type = "e2-standard-2"
   zone         = var.gcp_zone
-  tags         = ["kube-node", "http-server", "https-server"]
+  tags         = ["kube-node", "master", "http-server", "https-server"]
 
   boot_disk {
     initialize_params {
       image = "ubuntu-2204-lts"
-      size  = 50 # GB
+      size  = 50
     }
   }
 
   network_interface {
-    network = "default" # Using the default VPC network
-    access_config {
-      # Assign a public IP address for SSH access
-    }
+    network = "default"
+    access_config {} 
   }
 
-  # Startup script to install Docker, kubelet, kubeadm, kubectl, and configure prerequisites
-metadata_startup_script = <<EOF
+  metadata_startup_script = <<EOF
 #!/bin/bash
 set -e
 exec > >(tee /var/log/startup-script.log)
 exec 2>&1
 
-echo "Starting Kubernetes node setup..."
-
+echo "--- Installing Prerequisites ---"
 sudo apt-get update
 sudo apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release
 
-echo "Installing Docker..."
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+# Install containerd (recommended over full Docker for K8s)
+sudo mkdir -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 sudo apt-get update
-sudo apt-get install -y docker-ce docker-ce-cli containerd.io
+sudo apt-get install -y containerd.io
 
-echo "Configuring Docker daemon..."
-sudo tee /etc/docker/daemon.json > /dev/null <<'DOCKER_EOF'
-{
-  "exec-opts": ["native.cgroupdriver=systemd"],
-  "log-driver": "json-file",
-  "log-opts": {
-    "max-size": "100m"
-  },
-  "storage-driver": "overlay2"
-}
-DOCKER_EOF
-sudo systemctl enable docker
-sudo systemctl daemon-reload
-sudo systemctl restart docker
+# Configure containerd
+sudo containerd config default | sudo tee /etc/containerd/config.toml > /dev/null
+sudo sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
+sudo systemctl restart containerd
 
-echo "Disabling swap..."
+echo "--- Disabling swap ---"
 sudo swapoff -a
 sudo sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
 
-echo "Installing Kubernetes components..."
-# Poprawne repozytorium dla nowszych wersji Ubuntu
+echo "--- Installing Kubernetes components ---"
 curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
 echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
-
-# Alternatywnie, możesz użyć starszej metody (ale zaktualizowanej):
-# curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes.gpg
-# echo "deb [signed-by=/etc/apt/keyrings/kubernetes.gpg] https://apt.kubernetes.io/ kubernetes-xenial main" | sudo tee /etc/apt/sources.list.d/kubernetes.list
-
 sudo apt-get update
 sudo apt-get install -y kubelet kubeadm kubectl
 sudo apt-mark hold kubelet kubeadm kubectl
 
-echo "Configuring kernel networking..."
-sudo tee /etc/modules-load.d/k8s.conf > /dev/null <<'MODULES_EOF'
+echo "--- Configuring kernel networking ---"
+cat <<MODULES_EOF | sudo tee /etc/modules-load.d/k8s.conf
 br_netfilter
+overlay
 MODULES_EOF
+sudo modprobe br_netfilter
+sudo modprobe overlay
 
-sudo tee /etc/sysctl.d/k8s.conf > /dev/null <<'SYSCTL_EOF'
+cat <<SYSCTL_EOF | sudo tee /etc/sysctl.d/k8s.conf
 net.bridge.bridge-nf-call-ip6tables = 1
 net.bridge.bridge-nf-call-iptables = 1
 net.ipv4.ip_forward = 1
 SYSCTL_EOF
 sudo sysctl --system
 
-echo "Kubernetes node setup completed successfully"
+echo "--- Initializing K8s Cluster (Kubeadm) ---"
+# UŻYCIE TWOICH PARAMETRÓW: Service CIDR: 10.121.0.0/16, Pod CIDR: 10.122.0.0/16
+sudo kubeadm init --pod-network-cidr=10.122.0.0/16 --service-cidr=10.121.0.0/16 --node-name=kube-master
+
+# Configure kubectl for root and default user
+mkdir -p $HOME/.kube
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+echo "export KUBECONFIG=/etc/kubernetes/admin.conf" >> /etc/profile.d/k8s.sh
+export KUBECONFIG=/etc/kubernetes/admin.conf
+
+# Install Cilium CLI (to fulfill CNI requirement)
+CILIUM_CLI_VERSION=$(curl -s https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt)
+CLI_ARCH=$(dpkg --print-architecture)
+curl -L --fail --remote-name-all https://github.com/cilium/cilium-cli/releases/download/$${CILIUM_CLI_VERSION}/cilium-linux-$${CLI_ARCH}.tar.gz{,.sha256sum}
+sha256sum --check cilium-linux-$${CLI_ARCH}.tar.gz.sha256sum
+sudo tar xzvfC cilium-linux-$${CLI_ARCH}.tar.gz /usr/local/bin
+rm cilium-linux-$${CLI_ARCH}.tar.gz{,.sha256sum}
+
+# UWAGA: Cilium install zostanie wykonane manualnie lub przez Helm po dołączeniu workera.
+echo "Kubernetes master setup completed."
 EOF
 }
 
 # Worker Node VM
 resource "google_compute_instance" "worker_node" {
   name         = "kube-worker"
-  machine_type = "e2-standard-4" # As required by your task
+  machine_type = "e2-standard-4" # Zgodnie z wymaganiem (4 vCPU, 16 GB RAM)
   zone         = var.gcp_zone
-  tags         = ["kube-node"]
+  tags         = ["kube-node", "worker"]
 
   boot_disk {
     initialize_params {
       image = "ubuntu-2204-lts"
-      size  = 50 # GB
+      size  = 50
     }
   }
 
   network_interface {
-    network = "default" # Using the default VPC network
-    access_config {} # Assign a public IP address for SSH access
+    network = "default"
+    access_config {}
   }
 
-  # Use the same startup script as the master node for prerequisites
-  metadata_startup_script = google_compute_instance.master_node.metadata_startup_script
+  # Uproszczony skrypt dla Workera (tylko instalacja, bez kubeadm init)
+  metadata_startup_script = <<EOF
+#!/bin/bash
+set -e
+sudo apt-get update
+sudo apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release
+sudo mkdir -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt-get update
+sudo apt-get install -y containerd.io
+sudo containerd config default | sudo tee /etc/containerd/config.toml > /dev/null
+sudo sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
+sudo systemctl restart containerd
+sudo swapoff -a
+sudo sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+sudo apt-get update
+sudo apt-get install -y kubelet kubeadm kubectl
+sudo apt-mark hold kubelet kubeadm kubectl
+cat <<SYSCTL_EOF | sudo tee /etc/sysctl.d/k8s.conf
+net.bridge.bridge-nf-call-ip6tables = 1
+net.bridge.bridge-nf-call-iptables = 1
+net.ipv4.ip_forward = 1
+SYSCTL_EOF
+sudo sysctl --system
+EOF
 }
 
 # --- Firewall Rules ---
 
-# Allow Kubernetes internal communication and NodePort range
-resource "google_compute_firewall" "allow_kubernetes_ports" {
-  name    = "allow-kubernetes-ports"
+resource "google_compute_firewall" "allow_kubernetes_internal" {
+  name    = "allow-k8s-internal"
   network = "default"
 
   allow {
     protocol = "tcp"
-    ports    = ["6443", "2379-2380", "10250", "10251", "10252"] # Master ports
-  }
-  allow {
-    protocol = "tcp"
-    ports    = ["10250", "30000-32767"] # Worker ports (NodePort range)
+    ports    = ["0-65535"]
   }
   allow {
     protocol = "udp"
-    ports    = ["8285", "8472"] # Common CNI specific ports (e.g., Flannel, Calico)
+    ports    = ["0-65535"]
   }
   allow {
-    protocol = "icmp" # For pings
+    protocol = "icmp"
   }
-  source_tags = ["kube-node"] # Apply to VMs with 'kube-node' tag
-  target_tags = ["kube-node"] # Apply to VMs with 'kube-node' tag
+  source_tags = ["kube-node"]
 }
 
-# Allow SSH, HTTP, HTTPS from anywhere (for initial setup and potential web services)
-resource "google_compute_firewall" "allow_ssh_http_https" {
-  name    = "allow-ssh-http-https"
+resource "google_compute_firewall" "allow_ssh_external" {
+  name    = "allow-ssh-external"
   network = "default"
 
   allow {
     protocol = "tcp"
-    ports    = ["22", "80", "443"]
+    ports    = ["22", "6443"] # SSH + API Server
   }
-  source_ranges = ["0.0.0.0/0"] # Be more restrictive in production (e.g., your IP address)
-  target_tags   = ["http-server", "https-server"] # Apply only to nodes that need it (master)
+  source_ranges = ["0.0.0.0/0"]
 }
 
 # --- Outputs ---
 
-# Output the public IP addresses of the master and worker nodes for easy access
-output "master_public_ip" {
-  value       = google_compute_instance.master_node.network_interface[0].access_config[0].nat_ip
-  description = "The public IP address of the Kubernetes master node."
+output "master_ip" {
+  value = google_compute_instance.master_node.network_interface[0].access_config[0].nat_ip
 }
 
-output "worker_public_ip" {
-  value       = google_compute_instance.worker_node.network_interface[0].access_config[0].nat_ip
-  description = "The public IP address of the Kubernetes worker node."
+output "worker_ip" {
+  value = google_compute_instance.worker_node.network_interface[0].access_config[0].nat_ip
+}
+
+output "join_command_instruction" {
+  value = "Po zalogowaniu na Mastera przez SSH, wpisz: 'sudo kubeadm token create --print-join-command', a następnie wykonaj wynik na Workerze."
 }
