@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: swus-server-nodeport
+  namespace: default
+spec:
+  type: NodePort
+  selector:
+    app: swus-server
+  ports:
+  - protocol: TCP
+    port: 5000
+    targetPort: 5000
+    nodePort: 30000  # Dostęp z zewnątrz: <IP_node>:30000

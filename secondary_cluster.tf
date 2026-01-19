@@ -1,17 +1,19 @@
-# Configure the Google Cloud provider
+# Configure the Google Cloud provider for second cluster
 provider "google" {
+  alias   = "secondary"
   project = var.gcp_project_id
-  zone    = var.gcp_zone
+  zone    = var.gcp_zone_secondary
 }
 
-# --- Compute Engine Instances (VMs) ---
+# --- Compute Engine Instances for Secondary Cluster (Phase III) ---
 
-# Master Node VM
-resource "google_compute_instance" "master_node" {
-  name         = "kube-master"
+# Master Node VM - Secondary Cluster
+resource "google_compute_instance" "master_node_secondary" {
+  provider     = google.secondary
+  name         = "kube-master-secondary"
   machine_type = "e2-standard-2"
-  zone         = var.gcp_zone
-  tags         = ["kube-node", "master", "http-server", "https-server"]
+  zone         = var.gcp_zone_secondary
+  tags         = ["kube-node-secondary", "master-secondary", "http-server", "https-server"]
 
   boot_disk {
     initialize_params {
@@ -22,7 +24,7 @@ resource "google_compute_instance" "master_node" {
 
   network_interface {
     network = "default"
-    access_config {} 
+    access_config {}
   }
 
   metadata_startup_script = <<EOF
@@ -31,11 +33,11 @@ set -e
 exec > >(tee /var/log/startup-script.log)
 exec 2>&1
 
-echo "--- Installing Prerequisites ---"
+echo "--- Installing Prerequisites for Secondary Cluster ---"
 sudo apt-get update
 sudo apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release
 
-# Install containerd (recommended over full Docker for K8s)
+# Install containerd
 sudo mkdir -p /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
@@ -74,11 +76,11 @@ net.ipv4.ip_forward = 1
 SYSCTL_EOF
 sudo sysctl --system
 
-echo "--- Initializing K8s Cluster (Kubeadm) ---"
-# UŻYCIE TWOICH PARAMETRÓW: Service CIDR: 10.121.0.0/16, Pod CIDR: 10.122.0.0/16
-sudo kubeadm init --pod-network-cidr=10.122.0.0/16 --service-cidr=10.121.0.0/16 --node-name=kube-master
+echo "--- Initializing K8s Cluster (Kubeadm) - Secondary ---"
+# SECONDARY CLUSTER: Service CIDR: 10.131.0.0/16, Pod CIDR: 10.132.0.0/16
+sudo kubeadm init --pod-network-cidr=10.132.0.0/16 --service-cidr=10.131.0.0/16 --node-name=kube-master-secondary
 
-# Configure kubectl for root and default user
+# Configure kubectl
 mkdir -p $HOME/.kube
 sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
 sudo chown $(id -u):$(id -g) $HOME/.kube/config
@@ -86,7 +88,7 @@ sudo chown $(id -u):$(id -g) $HOME/.kube/config
 echo "export KUBECONFIG=/etc/kubernetes/admin.conf" >> /etc/profile.d/k8s.sh
 export KUBECONFIG=/etc/kubernetes/admin.conf
 
-# Install Cilium CLI (to fulfill CNI requirement)
+# Install Cilium CLI
 CILIUM_CLI_VERSION=$(curl -s https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt)
 CLI_ARCH=$(dpkg --print-architecture)
 curl -L --fail --remote-name-all https://github.com/cilium/cilium-cli/releases/download/$${CILIUM_CLI_VERSION}/cilium-linux-$${CLI_ARCH}.tar.gz{,.sha256sum}
@@ -94,17 +96,17 @@ sha256sum --check cilium-linux-$${CLI_ARCH}.tar.gz.sha256sum
 sudo tar xzvfC cilium-linux-$${CLI_ARCH}.tar.gz /usr/local/bin
 rm cilium-linux-$${CLI_ARCH}.tar.gz{,.sha256sum}
 
-# UWAGA: Cilium install zostanie wykonane manualnie lub przez Helm po dołączeniu workera.
-echo "Kubernetes master setup completed."
+echo "Secondary cluster setup completed."
 EOF
 }
 
-# Worker Node VM
-resource "google_compute_instance" "worker_node" {
-  name         = "kube-worker"
-  machine_type = "e2-standard-4" # Zgodnie z wymaganiem (4 vCPU, 16 GB RAM)
-  zone         = var.gcp_zone
-  tags         = ["kube-node", "worker"]
+# Worker Node VM - Secondary Cluster
+resource "google_compute_instance" "worker_node_secondary" {
+  provider     = google.secondary
+  name         = "kube-worker-secondary"
+  machine_type = "e2-standard-4"
+  zone         = var.gcp_zone_secondary
+  tags         = ["kube-node-secondary", "worker-secondary"]
 
   boot_disk {
     initialize_params {
@@ -118,7 +120,6 @@ resource "google_compute_instance" "worker_node" {
     access_config {}
   }
 
-  # Uproszczony skrypt dla Workera (tylko instalacja, bez kubeadm init)
   metadata_startup_script = <<EOF
 #!/bin/bash
 set -e
@@ -149,11 +150,12 @@ sudo sysctl --system
 EOF
 }
 
-# --- Firewall Rules ---
+# --- Firewall Rules for Secondary Cluster ---
 
-resource "google_compute_firewall" "allow_kubernetes_internal" {
-  name    = "allow-k8s-internal"
-  network = "default"
+resource "google_compute_firewall" "allow_kubernetes_internal_secondary" {
+  provider = google.secondary
+  name     = "allow-k8s-internal-secondary"
+  network  = "default"
 
   allow {
     protocol = "tcp"
@@ -166,30 +168,31 @@ resource "google_compute_firewall" "allow_kubernetes_internal" {
   allow {
     protocol = "icmp"
   }
-  source_tags = ["kube-node"]
+  source_tags = ["kube-node-secondary"]
 }
 
-resource "google_compute_firewall" "allow_ssh_external" {
-  name    = "allow-ssh-external"
-  network = "default"
+resource "google_compute_firewall" "allow_ssh_external_secondary" {
+  provider = google.secondary
+  name     = "allow-ssh-external-secondary"
+  network  = "default"
 
   allow {
     protocol = "tcp"
-    ports    = ["22", "6443"] # SSH + API Server
+    ports    = ["22", "6443"]
   }
   source_ranges = ["0.0.0.0/0"]
 }
 
-# --- Outputs ---
+# --- Outputs for Secondary Cluster ---
 
-output "master_ip" {
-  value = google_compute_instance.master_node.network_interface[0].access_config[0].nat_ip
+output "master_ip_secondary" {
+  value = google_compute_instance.master_node_secondary.network_interface[0].access_config[0].nat_ip
 }
 
-output "worker_ip" {
-  value = google_compute_instance.worker_node.network_interface[0].access_config[0].nat_ip
+output "worker_ip_secondary" {
+  value = google_compute_instance.worker_node_secondary.network_interface[0].access_config[0].nat_ip
 }
 
-output "join_command_instruction" {
-  value = "Po zalogowaniu na Mastera przez SSH, wpisz: 'sudo kubeadm token create --print-join-command', a następnie wykonaj wynik na Workerze."
+output "join_command_instruction_secondary" {
+  value = "Po zalogowaniu na Masterze (secondary) przez SSH, wpisz: 'sudo kubeadm token create --print-join-command', a następnie wykonaj wynik na Workerze (secondary)."
 }

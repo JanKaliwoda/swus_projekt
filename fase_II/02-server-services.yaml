@@ -1,0 +1,34 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: swus-server-nodeport
+  namespace: swus-app
+  labels:
+    app: swus-server
+    scenario: "2a"
+spec:
+  type: NodePort
+  selector:
+    app: swus-server
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8080
+    nodePort: 30080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: swus-server-clusterip
+  namespace: swus-app
+  labels:
+    app: swus-server
+    scenario: "2b"
+spec:
+  type: ClusterIP
+  selector:
+    app: swus-server
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8080

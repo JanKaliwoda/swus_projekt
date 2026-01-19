@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: swus-server
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: swus-server
+  template:
+    metadata:
+      labels:
+        app: swus-server
+    spec:
+      containers:
+      - name: server
+        image: pmatysiaq/swus-server:1.0.0  # Zastąp <wersja> wersją wskazaną przez prowadzącego
+        ports:
+        - containerPort: 5000
+          protocol: TCP
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 5000
+          initialDelaySeconds: 5
+          periodSeconds: 5

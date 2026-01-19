@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: swus-server-clusterip
+  namespace: default
+spec:
+  type: ClusterIP
+  selector:
+    app: swus-server
+  ports:
+  - protocol: TCP
+    port: 5000
+    targetPort: 5000
+  # Dostęp wewnątrz klastra: swus-server-clusterip.default.svc.cluster.local:5000

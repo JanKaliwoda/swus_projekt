@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: client-pod
+  namespace: default
+spec:
+  containers:
+  - name: client
+    image: curlimages/curl:8.10.1
+    command: ["sleep", "3600"]  # Utrzymuje pod uruchomiony przez 1h
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "50m"
+      limits:
+        memory: "256Mi"
+        cpu: "200m"
+  restartPolicy: Always

@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: swus-client-curl
+  namespace: swus-app
+  labels:
+    app: swus-client
+spec:
+  containers:
+  - name: curl
+    image: curlimages/curl:8.10.1
+    command:
+      - /bin/sh
+      - -c
+      - sleep 3600
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+      limits:
+        memory: "128Mi"
+        cpu: "200m"
+  restartPolicy: Always
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: swus-client-k6
+  namespace: swus-app
+  labels:
+    app: swus-client
+spec:
+  containers:
+  - name: k6
+    image: grafana/k6:0.54.0
+    command:
+      - /bin/sh
+      - -c
+      - sleep 3600
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "200m"
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
+  restartPolicy: Always
