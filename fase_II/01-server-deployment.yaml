@@ -22,7 +22,7 @@ spec:
       - name: server
         image: pmatysiaq/swus-server:v1.5.1
         ports:
-        - containerPort: 8080
+        - containerPort: 5000
           name: http
         resources:
           requests:
@@ -31,15 +31,3 @@ spec:
           limits:
             memory: "256Mi"
             cpu: "500m"
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 8080
-          initialDelaySeconds: 10
-          periodSeconds: 10
-        readinessProbe:
-          httpGet:
-            path: /ready
-            port: 8080
-          initialDelaySeconds: 5
-          periodSeconds: 5

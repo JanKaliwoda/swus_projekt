@@ -180,6 +180,19 @@ resource "google_compute_firewall" "allow_ssh_external" {
   source_ranges = ["0.0.0.0/0"]
 }
 
+resource "google_compute_firewall" "allow_nodeport_external" {
+  name    = "allow-nodeport-external"
+  network = "default"
+
+  allow {
+    protocol = "tcp"
+    ports    = ["30080"] # NodePort
+  }
+
+  source_ranges = ["0.0.0.0/0"] # dostęp z zewnątrz
+  target_tags   = ["kube-node"] # tylko węzły klastra
+}
+
 # --- Outputs ---
 
 output "master_ip" {
