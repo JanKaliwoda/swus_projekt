@@ -6,6 +6,7 @@ provider "google" {
 
 # --- Compute Engine Instances (VMs) ---
 
+
 # Master Node VM
 resource "google_compute_instance" "master_node" {
   name         = "kube-master"
@@ -23,15 +24,19 @@ resource "google_compute_instance" "master_node" {
   network_interface {
     network = "default"
     access_config {} 
+
+
   }
 
   metadata_startup_script = <<EOF
+
 #!/bin/bash
 set -e
 exec > >(tee /var/log/startup-script.log)
 exec 2>&1
 
 echo "--- Installing Prerequisites ---"
+
 sudo apt-get update
 sudo apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release
 
@@ -47,17 +52,32 @@ sudo containerd config default | sudo tee /etc/containerd/config.toml > /dev/nul
 sudo sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
 sudo systemctl restart containerd
 
+
+
+
+
+
+
+
+
+
+
 echo "--- Disabling swap ---"
 sudo swapoff -a
 sudo sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
 
 echo "--- Installing Kubernetes components ---"
+
 curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
 echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+
+
+
+
+
 sudo apt-get update
 sudo apt-get install -y kubelet kubeadm kubectl
 sudo apt-mark hold kubelet kubeadm kubectl
-sudo systemctl enable kubelet
 
 echo "--- Configuring kernel networking ---"
 cat <<MODULES_EOF | sudo tee /etc/modules-load.d/k8s.conf
@@ -139,7 +159,6 @@ echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.
 sudo apt-get update
 sudo apt-get install -y kubelet kubeadm kubectl
 sudo apt-mark hold kubelet kubeadm kubectl
-sudo systemctl enable kubelet
 cat <<SYSCTL_EOF | sudo tee /etc/sysctl.d/k8s.conf
 net.bridge.bridge-nf-call-ip6tables = 1
 net.bridge.bridge-nf-call-iptables = 1
@@ -153,11 +172,16 @@ EOF
 
 resource "google_compute_firewall" "allow_kubernetes_internal" {
   name    = "allow-k8s-internal"
+
   network = "default"
 
   allow {
     protocol = "tcp"
     ports    = ["0-65535"]
+
+
+
+
   }
   allow {
     protocol = "udp"
@@ -167,10 +191,12 @@ resource "google_compute_firewall" "allow_kubernetes_internal" {
     protocol = "icmp"
   }
   source_tags = ["kube-node"]
+
 }
 
 resource "google_compute_firewall" "allow_ssh_external" {
   name    = "allow-ssh-external"
+
   network = "default"
 
   allow {
@@ -178,6 +204,7 @@ resource "google_compute_firewall" "allow_ssh_external" {
     ports    = ["22", "6443"] # SSH + API Server
   }
   source_ranges = ["0.0.0.0/0"]
+
 }
 
 resource "google_compute_firewall" "allow_nodeport_external" {
@@ -192,6 +219,9 @@ resource "google_compute_firewall" "allow_nodeport_external" {
   source_ranges = ["0.0.0.0/0"] # dostęp z zewnątrz
   target_tags   = ["kube-node"] # tylko węzły klastra
 }
+
+
+
 
 # --- Outputs ---
 
