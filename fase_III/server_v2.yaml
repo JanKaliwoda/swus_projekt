@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: swus-app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: swus-server-secondary
+  namespace: swus-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: swus-server
+      cluster: secondary
+  template:
+    metadata:
+      labels:
+        app: swus-server
+        cluster: secondary
+    spec:
+      containers:
+      - name: server
+        image: pmatysiaq/swus-server:v1.5.2
+        ports:
+        - containerPort: 5000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: swus-server-clusterip
+  namespace: swus-app
+spec:
+  type: ClusterIP
+  selector:
+    app: swus-server
+    cluster: secondary
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 5000

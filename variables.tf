@@ -1,7 +1,7 @@
 variable "gcp_project_id" {
   description = "The GCP project ID"
   type        = string
-  default     = "cedar-abacus-480412-e1" 
+  default     = "project-3038c4a4-b45e-4552-a13" 
 }
 
 variable "gcp_zone" {
